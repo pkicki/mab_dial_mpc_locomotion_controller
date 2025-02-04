@@ -1,3 +1,4 @@
+from time import perf_counter
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -112,7 +113,11 @@ class SBDialMPCLocomotionControllerNode(Node):
         if not self.mpc_active:
             return
 
+        print("CALL MPC")
+        t0 = perf_counter()
         target_joint_positions = self.locomotion_controller.compute_target_joint_positions()
+        t1 = perf_counter()
+        print("MPC took", t1 - t0, "seconds")
         self.publish_joint_command(target_joint_positions)
 
 
