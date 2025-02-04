@@ -45,7 +45,7 @@ class SBDialMPCLocomotionController:
         ])
 
         self.mask_from_real_to_obssim = [3, 4, 5, 0, 1, 2, 6, 7, 8, 9, 10, 11, 12]
-        self.mask_from_xmlsim_to_real = [7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 0]
+        self.mask_from_xmlsim_to_real = np.array([7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 0])
         self.mask_from_xmlsim_to_obssim = [10, 11, 12, 7, 8, 9, 1, 2, 3, 4, 5, 6, 0]
 
         self.config_path = os.path.join(os.path.dirname(__file__),
@@ -57,6 +57,7 @@ class SBDialMPCLocomotionController:
         self.trajectory_diffuse_factor = 0.5
         self.Ndiffuse = 2
         self.Ndiffuse_init = 10
+        print("CONTROLLER READY")
 
     def load_dial_mpc(self):
         config_dict = yaml.safe_load(open(self.config_path))
