@@ -73,6 +73,7 @@ class SBDialMPCLocomotionControllerNode(Node):
 
     def bridge_data_callback(self, msg):
         self.locomotion_controller.set_robot_internal_state(
+            joint_names=msg.joint_name,
             joint_positions=np.array(msg.joint_position),
             joint_velocities=np.array(msg.joint_velocity),
         )

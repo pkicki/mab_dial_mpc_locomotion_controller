@@ -54,9 +54,15 @@ class SBDialMPCLocomotionController:
 
         self.config_path = os.path.join(os.path.dirname(__file__),
                                         "dial-mpc/dial_mpc/examples/mab_sb_trot.yaml")
-        self.cli_args = type('CLIArgs', (object,), {'lporder': 3, 'lpfreq': 3,
-                                                    'beta': None, 'hnode': 16})()
+        self.cli_args = type('CLIArgs', (object,), {
+            'noise_type': "lp",
+            'lporder': 3, 'lpfreq': 3,
+            'beta': 3, 'hnode': 12, 'hsample': 12})()
         self.controls, self.dial_mpc, self.state, self.rng = self.load_dial_mpc()
+
+        self.ros2xml = None
+        self.xml2ros = None
+
         self._it = 0
         self.trajectory_diffuse_factor = 0.5
         self.Ndiffuse = 2
@@ -74,6 +80,10 @@ class SBDialMPCLocomotionController:
         dial_config = load_dataclass_from_dict(DialConfig, config_dict)
         if self.cli_args.hnode is not None:
             dial_config.Hnode = self.cli_args.hnode
+        if self.cli_args.noise_type is not None:
+            dial_config.noise_type = self.cli_args.noise_type
+        if self.cli_args.hsample is not None:
+            dial_config.hsample = self.cli_args.hsample
         rng = jax.random.PRNGKey(seed=0)
 
         # find env config
@@ -95,13 +105,29 @@ class SBDialMPCLocomotionController:
 
         return Y, mbdpi, state_init, rng
 
+    def setup_ros_xml_mapping(self, joint_names):
+        actadr = self.dial_mpc.env.sys.mj_model.name_actuatoradr
+        xml_act_names = [self.dial_mpc.env.sys.mj_model.names[actadr[i]:].split(b'\x00', 1)[0].decode() for i in range(len(actadr))]
+        xml_act_names = [x.lower()
+                         .replace("hip", "j0")
+                         .replace("thigh", "j1")
+                         .replace("calf", "j2")
+                         .replace("spine", "sp_j0") for x in xml_act_names]
+        ros_names2xml_idx = {x: i for i, x in enumerate(xml_act_names)}
 
-    def set_robot_internal_state(self, joint_positions: np.array, joint_velocities: np.array):
-        self.joint_positions = joint_positions
-        self.joint_velocities = joint_velocities
+        self.ros2xml = np.array([ros_names2xml_idx[n] for n in joint_names])
+        self.xml2ros = np.array([joint_names.index(n) for n in xml_act_names])
+
+
+    def set_robot_internal_state(self, joint_names: list,
+                                 joint_positions: np.array, joint_velocities: np.array):
+        if self.ros2xml is None or self.xml2ros is None:
+            self.setup_ros_xml_mapping(joint_names)
+        self.joint_positions = joint_positions[self.ros2xml]
+        self.joint_velocities = joint_velocities[self.ros2xml]
         if self.real_robot and self.tuda_robot:
-            self.joint_positions[-1] *= -1.0
-            self.joint_velocities[-1] *= -1.0
+            self.joint_positions[0] *= -1.0
+            self.joint_velocities[0] *= -1.0
 
 
     def set_robot_external_state(self, position: np.array, velocity: np.array,
@@ -134,36 +160,29 @@ class SBDialMPCLocomotionController:
             n_diffuse = self.Ndiffuse_init
             print("Performing JIT on DIAL-MPC")
 
-        print("Ndiffuse:", n_diffuse)
-        t0 = perf_counter()
         traj_diffuse_factors = (
             self.dial_mpc.sigma_control * self.trajectory_diffuse_factor ** (jnp.arange(n_diffuse))[:, None]
         )
-        t1 = perf_counter()
-        print("TRAJ DIFFUSE FACTORS:", traj_diffuse_factors.shape)
         (self.rng, self.controls, _), info = jax.lax.scan(
-            #reverse_scan, (self.rng, self.controls, self.state), traj_diffuse_factors
             self.reverse_scan, (self.rng, self.controls, self.state), traj_diffuse_factors
         )
-        #self.rng, self.controls, self.info = jax.lax.scan(self.dial_mpc.reverse_once, self.state, self.rng, self.controls, traj_diffuse_factors)
-        t2 = perf_counter()
-        print("T1:", t1 - t0, "T2:", t2 - t1)
 
         action = self.controls[0]
+        target_joint_positions_xml = self.dial_mpc.env.act2joint(action)
         if self.spine_locked:
             action = np.insert(action, 0, 0.0)
 
-        robot_action = action[self.mask_from_xmlsim_to_real] # TODO check if correct
+        target_joint_positions_ros = target_joint_positions_xml[self.xml2ros] # TODO check if correct
+        #target_joint_positions = action[self.mask_from_xmlsim_to_real] # TODO check if correct
 
-        target_joint_positions = self.nominal_joint_positions + robot_action
         if self.real_robot and self.tuda_robot:
-            target_joint_positions[-1] *= -1.0
+            target_joint_positions_ros[0] *= -1.0
 
         # update Y0
         self.controls = self.dial_mpc.shift(self.controls)
         self._it += 1
 
-        return target_joint_positions
+        return target_joint_positions_ros
 
 
 if __name__ == "__main__":
