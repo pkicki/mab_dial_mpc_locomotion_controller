@@ -1,9 +1,11 @@
+from copy import copy
 import os
 import numpy as np
 import jax
 import jax.numpy as jnp
 import yaml
 import brax.envs as brax_envs
+from time import perf_counter
 
 import dial_mpc.envs as dial_envs
 from dial_mpc.utils.io_utils import get_example_path, load_dataclass_from_dict
@@ -23,7 +25,9 @@ class SBDialMPCLocomotionController:
 
         self.joint_positions = np.zeros(self.num_joints)
         self.joint_velocities = np.zeros(self.num_joints)
+        self.position = np.zeros(3)
         self.orientation = np.array([0.0, 0.0, 0.0, 1.0])
+        self.velocity = np.zeros(3)
         self.angular_velocity = np.zeros(3)
         self.x_goal_velocity = 0.0
         self.y_goal_velocity = 0.0
@@ -57,6 +61,11 @@ class SBDialMPCLocomotionController:
         self.trajectory_diffuse_factor = 0.5
         self.Ndiffuse = 2
         self.Ndiffuse_init = 10
+        def reverse_scan(rng_Y0_state, factor):
+            rng, Y0, state = rng_Y0_state
+            rng, Y0, info = self.dial_mpc.reverse_once(state, rng, Y0, factor)
+            return (rng, Y0, state), info
+        self.reverse_scan = jax.jit(reverse_scan)
         print("CONTROLLER READY")
 
     def load_dial_mpc(self):
@@ -86,7 +95,7 @@ class SBDialMPCLocomotionController:
 
         return Y, mbdpi, state_init, rng
 
-            
+
     def set_robot_internal_state(self, joint_positions: np.array, joint_velocities: np.array):
         self.joint_positions = joint_positions
         self.joint_velocities = joint_velocities
@@ -106,7 +115,7 @@ class SBDialMPCLocomotionController:
     def set_velocity_command(self, vx, vy, wz):
         self.x_goal_velocity = vx
         self.y_goal_velocity = vy
-        self.yaw_goal_velocity = wz 
+        self.yaw_goal_velocity = wz
 
     def update_mjx_state(self):
         q = np.concatenate([self.position, self.orientation, self.joint_positions])
@@ -118,11 +127,6 @@ class SBDialMPCLocomotionController:
         self.state = self.state.replace(pipeline_state=pipeline_state, info=info)
 
     def compute_target_joint_positions(self):
-        def reverse_scan(rng_Y0_state, factor):
-            rng, Y0, state = rng_Y0_state
-            rng, Y0, info = self.dial_mpc.reverse_once(state, rng, Y0, factor)
-            return (rng, Y0, state), info
-
         self.update_mjx_state()
 
         n_diffuse = self.Ndiffuse
@@ -130,12 +134,20 @@ class SBDialMPCLocomotionController:
             n_diffuse = self.Ndiffuse_init
             print("Performing JIT on DIAL-MPC")
 
+        print("Ndiffuse:", n_diffuse)
+        t0 = perf_counter()
         traj_diffuse_factors = (
             self.dial_mpc.sigma_control * self.trajectory_diffuse_factor ** (jnp.arange(n_diffuse))[:, None]
         )
+        t1 = perf_counter()
+        print("TRAJ DIFFUSE FACTORS:", traj_diffuse_factors.shape)
         (self.rng, self.controls, _), info = jax.lax.scan(
-            reverse_scan, (self.rng, self.controls, self.state), traj_diffuse_factors
+            #reverse_scan, (self.rng, self.controls, self.state), traj_diffuse_factors
+            self.reverse_scan, (self.rng, self.controls, self.state), traj_diffuse_factors
         )
+        #self.rng, self.controls, self.info = jax.lax.scan(self.dial_mpc.reverse_once, self.state, self.rng, self.controls, traj_diffuse_factors)
+        t2 = perf_counter()
+        print("T1:", t1 - t0, "T2:", t2 - t1)
 
         action = self.controls[0]
         if self.spine_locked:
@@ -155,8 +167,13 @@ class SBDialMPCLocomotionController:
 
 
 if __name__ == "__main__":
-    SBDialMPCLocomotionController(
+    controller = SBDialMPCLocomotionController(
         real_robot=True,
         tuda_robot=True,
         spine_locked=True,
     )
+    for i in range(10):
+        t0 = perf_counter()
+        controller.compute_target_joint_positions()
+        t1 = perf_counter()
+        print("MPC took", t1 - t0, "seconds")
