@@ -25,8 +25,8 @@ class SBDialMPCLocomotionController:
 
         self.joint_positions = np.zeros(self.num_joints)
         self.joint_velocities = np.zeros(self.num_joints)
-        self.position = np.zeros(3)
-        self.orientation = np.array([0.0, 0.0, 0.0, 1.0])
+        self.position = np.array([0., 0., 0.3])
+        self.orientation = np.array([1.0, 0.0, 0.0, 0.0])
         self.velocity = np.zeros(3)
         self.angular_velocity = np.zeros(3)
         self.x_goal_velocity = 0.0
@@ -115,8 +115,8 @@ class SBDialMPCLocomotionController:
                          .replace("spine", "sp_j0") for x in xml_act_names]
         ros_names2xml_idx = {x: i for i, x in enumerate(xml_act_names)}
 
-        self.ros2xml = np.array([ros_names2xml_idx[n] for n in joint_names])
-        self.xml2ros = np.array([joint_names.index(n) for n in xml_act_names])
+        self.xml2ros = np.array([ros_names2xml_idx[n] for n in joint_names])
+        self.ros2xml = np.array([joint_names.index(n) for n in xml_act_names])
 
 
     def set_robot_internal_state(self, joint_names: list,
